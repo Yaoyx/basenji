@@ -26,6 +26,7 @@ import tensorflow as tf
 # TFRecord constants
 TFR_INPUT = 'sequence'
 TFR_OUTPUT = 'target'
+TFR_MASK = 'mask'
 
 def file_to_records(filename):
   return tf.data.TFRecordDataset(filename, compression_type='ZLIB')
@@ -78,7 +79,8 @@ class SeqDataset:
       # define features
       features = {
         TFR_INPUT: tf.io.FixedLenFeature([], tf.string),
-        TFR_OUTPUT: tf.io.FixedLenFeature([], tf.string)
+        TFR_OUTPUT: tf.io.FixedLenFeature([], tf.string),
+        TFR_MASK: tf.io.FixedLenFeature([], tf.string)
       }
 
       # parse example into features
@@ -104,7 +106,13 @@ class SeqDataset:
         targets = tf.reshape(targets, [self.target_length, self.num_targets])
         targets = tf.cast(targets, tf.float32)
 
-      return sequence, targets
+      #decode mask
+      mask = tf.io.decode_raw(parsed_features['mask'], tf.float16)
+      if not raw:
+        mask = tf.reshape(mask, [self.target_length, self.num_targets])
+        mask = tf.cast(mask, tf.float32)
+
+      return sequence, targets, mask
 
     return parse_proto
 
@@ -218,9 +226,10 @@ class SeqDataset:
     # initialize inputs and outputs
     seqs_1hot = []
     targets = []
+    masks = []
 
     # collect inputs and outputs
-    for seq_raw, targets_raw in dataset:
+    for seq_raw, targets_raw, masks_raw in dataset:
       # sequence
       if return_inputs:
         seq_1hot = seq_raw.numpy().reshape((self.seq_length,-1))
@@ -239,18 +248,30 @@ class SeqDataset:
           step_i = np.arange(0, self.target_length, step)
           targets1 = targets1[step_i,:]
         targets.append(targets1)
+      
+      # masks 
+      if return_outputs:
+        masks1 = masks_raw.numpy().astype(dtype)
+        masks1 = np.reshape(masks1, (self.target_length,-1))
+        if target_slice is not None:
+          masks1 = masks1[:,target_slice]
+        if step > 1:
+          step_i = np.arange(0, self.target_length, step)
+          masks1 = masks1[step_i,:]
+        masks.append(masks1)
 
     # make arrays
     seqs_1hot = np.array(seqs_1hot)
     targets = np.array(targets, dtype=dtype)
+    masks = np.array(masks, dtype=dtype)
 
     # return
     if return_inputs and return_outputs:
-      return seqs_1hot, targets
+      return seqs_1hot, targets, masks
     elif return_inputs:
       return seqs_1hot
     else:
-      return targets
+      return targets, masks
 
 
 class RnaDataset:

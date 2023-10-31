@@ -33,29 +33,38 @@ from basenji import metrics
 
 def parse_loss(loss_label, strategy=None, keras_fit=True, spec_weight=1, total_weight=1, is_mask=False):
   """Parse loss function from label, strategy, and fitting method."""
-  if strategy is not None and not keras_fit:
+  if is_mask:
     if loss_label == 'mse':
-      loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
-    elif loss_label == 'bce':
-      loss_fn = tf.keras.losses.BinaryCrossentropy(reduction=tf.keras.losses.Reduction.NONE)
-    elif loss_label == 'poisson_mn':
-      loss_fn = metrics.PoissonMultinomial(total_weight,
-        reduction=tf.keras.losses.Reduction.NONE)
-    else:
-      loss_fn = tf.keras.losses.Poisson(reduction=tf.keras.losses.Reduction.NONE)
+      @tf.function
+      def masked_MeanSquaredError(y, y_pred, mask):
+        # mse = tf.keras.losses.MeanSquaredError() # tf.keras.losses.mean_squared_error
+        return tf.keras.losses.mean_squared_error(y * mask, y_pred * mask)
+      
+      loss_fn = masked_MeanSquaredError
   else:
-    if loss_label == 'mse':
-      loss_fn = tf.keras.losses.MeanSquaredError()
-    elif loss_label == 'mse_udot':
-      loss_fn = metrics.MeanSquaredErrorUDot(spec_weight)
-    elif loss_label == 'bce':
-      loss_fn = tf.keras.losses.BinaryCrossentropy()
-    elif loss_label == 'poisson_kl':
-      loss_fn = metrics.PoissonKL(spec_weight)
-    elif loss_label == 'poisson_mn':
-      loss_fn = metrics.PoissonMultinomial(total_weight)
+    if strategy is not None and not keras_fit:
+      if loss_label == 'mse':
+        loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
+      elif loss_label == 'bce':
+        loss_fn = tf.keras.losses.BinaryCrossentropy(reduction=tf.keras.losses.Reduction.NONE)
+      elif loss_label == 'poisson_mn':
+        loss_fn = metrics.PoissonMultinomial(total_weight,
+          reduction=tf.keras.losses.Reduction.NONE)
+      else:
+        loss_fn = tf.keras.losses.Poisson(reduction=tf.keras.losses.Reduction.NONE)
     else:
-      loss_fn = tf.keras.losses.Poisson()
+      if loss_label == 'mse':
+        loss_fn = tf.keras.losses.MeanSquaredError()
+      elif loss_label == 'mse_udot':
+        loss_fn = metrics.MeanSquaredErrorUDot(spec_weight)
+      elif loss_label == 'bce':
+        loss_fn = tf.keras.losses.BinaryCrossentropy()
+      elif loss_label == 'poisson_kl':
+        loss_fn = metrics.PoissonKL(spec_weight)
+      elif loss_label == 'poisson_mn':
+        loss_fn = metrics.PoissonMultinomial(total_weight)
+      else:
+        loss_fn = tf.keras.losses.Poisson()
 
   return loss_fn
 
@@ -188,9 +197,9 @@ class Trainer:
         with tf.GradientTape() as tape:
           pred = seqnn_model.models[0](x, training=True)
           if self.is_mask:
-            y = y * mask
-            pred = pred * mask
-          loss = self.loss_fn(y, pred) + sum(seqnn_model.models[0].losses)
+            loss = self.loss_fn(y, pred, mask) + sum(seqnn_model.models[0].losses)
+          else:
+            loss = self.loss_fn(y, pred) + sum(seqnn_model.models[0].losses)
         train_loss[0](loss)
         train_r[0](y, pred)
         train_r2[0](y, pred)
@@ -201,9 +210,9 @@ class Trainer:
       def eval_step0(x, y, mask=None):
         pred = seqnn_model.models[0](x, training=False)
         if self.is_mask:
-          y = y * mask
-          pred = pred * mask
-        loss = self.loss_fn(y, pred) + sum(seqnn_model.models[0].losses)
+          loss = self.loss_fn(y, pred, mask) + sum(seqnn_model.models[0].losses)
+        else:
+          loss = self.loss_fn(y, pred) + sum(seqnn_model.models[0].losses)
         valid_loss[0](loss)
         valid_r[0](y, pred)
         valid_r2[0](y, pred)
@@ -214,9 +223,9 @@ class Trainer:
           with tf.GradientTape() as tape:
             pred = seqnn_model.models[1](x, training=True)
             if self.is_mask:
-              y = y * mask
-              pred = pred * mask
-            loss = self.loss_fn(y, pred) + sum(seqnn_model.models[1].losses)
+              loss = self.loss_fn(y, pred, mask) + sum(seqnn_model.models[1].losses)
+            else:
+              loss = self.loss_fn(y, pred) + sum(seqnn_model.models[1].losses)
           train_loss[1](loss)
           train_r[1](y, pred)
           train_r2[1](y, pred)
@@ -227,9 +236,9 @@ class Trainer:
         def eval_step1(x, y, mask=None):
           pred = seqnn_model.models[1](x, training=False)
           if self.is_mask:
-            y = y * mask
-            pred = pred * mask
-          loss = self.loss_fn(y, pred) + sum(seqnn_model.models[1].losses)
+            loss = self.loss_fn(y, pred, mask) + sum(seqnn_model.models[1].losses)
+          else:
+            loss = self.loss_fn(y, pred) + sum(seqnn_model.models[1].losses)
           valid_loss[1](loss)
           valid_r[1](y, pred)
           valid_r2[1](y, pred)
@@ -238,9 +247,9 @@ class Trainer:
         with tf.GradientTape() as tape:
           pred = seqnn_model.models[0](x, training=True)
           if self.is_mask:
-            y = y * mask
-            pred = pred * mask
-          loss_batch_len = self.loss_fn(y, pred)
+            loss_batch_len = self.loss_fn(y, pred, mask)
+          else:
+            loss_batch_len = self.loss_fn(y, pred)
           loss_batch = tf.reduce_mean(loss_batch_len, axis=-1)
           loss = tf.reduce_sum(loss_batch) / self.batch_size
           loss += sum(seqnn_model.models[0].losses) / self.num_gpu
@@ -260,9 +269,9 @@ class Trainer:
       def eval_step0(x, y, mask=None):
         pred = seqnn_model.models[0](x, training=False)
         if self.is_mask:
-          y = y * mask
-          pred = pred * mask
-        loss = self.loss_fn(y, pred) + sum(seqnn_model.models[0].losses)
+          loss = self.loss_fn(y, pred, mask) + sum(seqnn_model.models[0].losses)
+        else:
+          loss = self.loss_fn(y, pred) + sum(seqnn_model.models[0].losses)
         valid_loss[0](loss)
         valid_r[0](y, pred)
         valid_r2[0](y, pred)
@@ -276,9 +285,9 @@ class Trainer:
           with tf.GradientTape() as tape:
             pred = seqnn_model.models[1](x, training=True)
             if self.is_mask:
-              y = y * mask
-              pred = pred * mask
-            loss_batch_len = self.loss_fn(y, pred)
+              loss_batch_len = self.loss_fn(y, pred, mask)
+            else:
+              loss_batch_len = self.loss_fn(y, pred)
             loss_batch = tf.reduce_mean(loss_batch_len, axis=-1)
             loss = tf.reduce_sum(loss_batch) / self.batch_size
             loss += sum(seqnn_model.models[1].losses) / self.num_gpu
@@ -299,9 +308,9 @@ class Trainer:
         def eval_step1(x, y, mask=None):
           pred = seqnn_model.models[1](x, training=False)
           if self.is_mask:
-            y = y * mask
-            pred = pred * mask
-          loss = self.loss_fn(y, pred) + sum(seqnn_model.models[1].losses)
+            loss = self.loss_fn(y, pred, mask) + sum(seqnn_model.models[1].losses)
+          else:
+            loss = self.loss_fn(y, pred) + sum(seqnn_model.models[1].losses)
           valid_loss[1](loss)
           valid_r[1](y, pred)
           valid_r2[1](y, pred)
@@ -441,9 +450,9 @@ class Trainer:
         with tf.GradientTape() as tape:
           pred = model(x, training=True)
           if self.is_mask:
-            y = y * mask
-            pred = pred * mask
-          loss = self.loss_fn(y, pred) + sum(model.losses)
+            loss = self.loss_fn(y, pred, mask) + sum(model.losses)
+          else:
+            loss = self.loss_fn(y, pred) + sum(model.losses)
 
         train_loss(loss)
         train_r(y, pred)
@@ -457,9 +466,9 @@ class Trainer:
       def eval_step(x, y, mask=None):
         pred = model(x, training=False)
         if self.is_mask:
-          y = y * mask
-          pred = pred * mask
-        loss = self.loss_fn(y, pred) + sum(model.losses)
+          loss = self.loss_fn(y, pred, mask) + sum(model.losses)
+        else:
+          loss = self.loss_fn(y, pred) + sum(model.losses)
         valid_loss(loss)
         valid_r(y, pred)
         valid_r2(y, pred)
@@ -469,9 +478,9 @@ class Trainer:
         with tf.GradientTape() as tape:
           pred = model(x, training=True)
           if self.is_mask:
-            y = y * mask
-            pred = pred * mask
-          loss_batch_len = self.loss_fn(y, pred)
+            loss_batch_len = self.loss_fn(y, pred, mask)
+          else:
+            loss_batch_len = self.loss_fn(y, pred)
           loss_batch = tf.reduce_mean(loss_batch_len, axis=-1)
           loss = tf.reduce_sum(loss_batch) / self.batch_size
           loss += sum(model.losses) / self.num_gpu
@@ -492,9 +501,9 @@ class Trainer:
       def eval_step(x, y, mask=None):
         pred = model(x, training=False)
         if self.is_mask:
-          y = y * mask
-          pred = pred * mask
-        loss = self.loss_fn(y, pred) + sum(model.losses)
+          loss = self.loss_fn(y, pred, mask) + sum(model.losses)
+        else:
+          loss = self.loss_fn(y, pred) + sum(model.losses)
         valid_loss(loss)
         valid_r(y, pred)
         valid_r2(y, pred)
