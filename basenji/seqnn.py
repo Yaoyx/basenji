@@ -32,13 +32,16 @@ class MaskedModel(tf.keras.Model):
 
   def train_step(self, data):
     x, y, mask = data
-    print('Masked')
     # Run forward pass.
     with tf.GradientTape() as tape:
         y_pred = self(x, training=True)
+        unmask_loss = tf.math.reduce_mean(tf.keras.losses.mean_squared_error(y, y_pred))
+        tf.print(unmask_loss)
         y_pred = y_pred * mask
         y = y * mask
         loss = self.compute_loss(x, y, y_pred, sample_weight=None)
+        tf.print(loss)
+        tf.print('loss - unmask_loss:', loss - unmask_loss)
     self._validate_target_and_loss(y, loss)
     # Run backwards pass.
     self.optimizer.minimize(loss, self.trainable_variables, tape=tape)
