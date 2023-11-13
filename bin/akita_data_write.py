@@ -114,12 +114,14 @@ def main():
 
   # initialize targets
   targets = np.zeros((num_seqs, seq_pool_len_hic, num_targets_tfr), dtype='float16')
+  mask = np.zeros((num_seqs, seq_pool_len_hic, num_targets_tfr), dtype='float16')
 
   # read each target
   for ti in range(num_targets):
     seqs_cov_open = h5py.File(seqs_cov_files[ti], 'r')
     tii = options.target_start + ti
     targets[:,:,tii] = seqs_cov_open['targets'][options.start_i:options.end_i,:]
+    mask[:,:,tii] = seqs_cov_open['mask'][options.start_i:options.end_i,:]
     seqs_cov_open.close()
 
 
@@ -130,7 +132,7 @@ def main():
   fasta_open = pysam.Fastafile(fasta_file)
 
   # define options
-  tf_opts = tf.io.TFRecordOptions(compression='ZLIB')
+  tf_opts = tf.io.TFRecordOptions(compression_type='ZLIB')
 
   with tf.io.TFRecordWriter(tfr_file, tf_opts) as writer:
     for si in range(num_seqs):
@@ -146,13 +148,17 @@ def main():
       if options.genome_index is None:
         example = tf.train.Example(features=tf.train.Features(feature={
             'genome': _int_feature(0),
-            'sequence': _bytes_feature(seq_1hot.flatten().tostring()),
-            'target': _bytes_feature(targets[si,:,:].flatten().tostring())}))
+            'sequence': _bytes_feature(seq_1hot.flatten().tobytes()),
+            'target': _bytes_feature(targets[si,:,:].flatten().tobytes()),
+            'mask': _bytes_feature(mask[si,:,:].flatten().tobytes())
+            }))
       else:
         example = tf.train.Example(features=tf.train.Features(feature={
             'genome': _int_feature(options.genome_index),
-            'sequence': _bytes_feature(seq_1hot.flatten().tostring()),
-            'target': _bytes_feature(targets[si,:,:].flatten().tostring())}))
+            'sequence': _bytes_feature(seq_1hot.flatten().tobytes()),
+            'target': _bytes_feature(targets[si,:,:].flatten().tobytes()),
+            'mask': _bytes_feature(mask[si,:,:].flatten().tobytes())
+            }))
 
       writer.write(example.SerializeToString())
 

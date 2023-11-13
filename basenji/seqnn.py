@@ -35,38 +35,15 @@ class MaskedModel(tf.keras.Model):
     # Run forward pass.
     with tf.GradientTape() as tape:
         y_pred = self(x, training=True)
-        unmask_loss = tf.math.reduce_mean(tf.keras.losses.mean_squared_error(y, y_pred))
-        tf.print(unmask_loss)
+     
         y_pred = y_pred * mask
         y = y * mask
         loss = self.compute_loss(x, y, y_pred, sample_weight=None)
-        tf.print(loss)
-        tf.print('loss - unmask_loss:', loss - unmask_loss)
+        
     self._validate_target_and_loss(y, loss)
     # Run backwards pass.
     self.optimizer.minimize(loss, self.trainable_variables, tape=tape)
     return self.compute_metrics(x, y, y_pred, sample_weight=None)
-
-    # with tf.GradientTape() as tape:
-    #   y_pred = self(x, training=True)  # Forward pass
-    #   # (the loss function is configured in `compile()`)
-    #   loss = self.loss(y, y_pred, mask)
-    # self._validate_target_and_loss(y, loss)
-    # self.optimizer.minimize(loss, self.trainable_variables, tape=tape)
-
-    # # # Compute gradients
-    # # gradients = tape.gradient(loss, self.trainable_variables)
-    # # # Update weights
-    # # self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-    
-    # # Update metrics (includes the metric that tracks the loss)
-    # for metric in self.compiled_metrics._metrics:
-    #     if metric.name == "loss":
-    #         metric.update_state(loss)
-    #     else:
-    #         metric.update_state(y, y_pred)
-    # # Return a dict mapping metric names to current value
-    # return {m.name: m.result() for m in self.compiled_metrics._metrics}
   
   def test_step(self, data):
     x, y, mask = data
@@ -76,12 +53,37 @@ class MaskedModel(tf.keras.Model):
     self.compute_loss(x, y, y_pred, sample_weight=None)
 
     return self.compute_metrics(x, y, y_pred, sample_weight=None)
+
+class UnmaskedModel(tf.keras.Model):
+  def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+  def train_step(self, data):
+    x, y, mask = data
+    # Run forward pass.
+    with tf.GradientTape() as tape:
+        y_pred = self(x, training=True)
+        loss = self.compute_loss(x, y, y_pred, sample_weight=None)
+
+    self._validate_target_and_loss(y, loss)
+    # Run backwards pass.
+    self.optimizer.minimize(loss, self.trainable_variables, tape=tape)
+    return self.compute_metrics(x, y, y_pred, sample_weight=None)
+  
+  def test_step(self, data):
+    x, y, mask = data
+    y_pred = self(x, training=False)
+    self.compute_loss(x, y, y_pred, sample_weight=None)
+
+    return self.compute_metrics(x, y, y_pred, sample_weight=None)
   
 class SeqNN():
 
   def __init__(self, params, is_mask=False):
     if is_mask:
       tf.keras.Model = MaskedModel
+    else:
+      tf.keras.Model = UnmaskedModel
 
     self.set_defaults()
     for key, value in params.items():

@@ -115,6 +115,7 @@ def main():
   # initialize sequences coverage file
   seqs_hic_open = h5py.File(seqs_hic_file, 'w')
   seqs_hic_open.create_dataset('targets', shape=(num_seqs, seq_len_hic), dtype='float16')
+  seqs_hic_open.create_dataset('masks', shape=(num_seqs, seq_len_hic), dtype='float16')
 
   if options.kernel_stddev > 0:
     # initialize Gaussian kernel
@@ -148,7 +149,7 @@ def main():
       if chr_pre:
         mseq_str = '%s:%d-%d' % (mseq.chr, mseq.start, mseq.end)
       else:
-        mseq_str = '%s:%d-%d' % (mseq.chr[3:], mseq.start, mseq.end)
+        mseq_str = '%s:%d-%d' % (mseq.chr, mseq.start, mseq.end)
       #print('mseq_str:', mseq_str)
 
       seq_hic_raw = genome_hic_cool.matrix(balance=True).fetch(mseq_str)
@@ -181,6 +182,10 @@ def main():
                               cutoff=2, max_levels=8)
       seq_hic_nan = np.isnan(seq_hic_smoothed)
       #todo: pass an option to add a certain pseudocount value, or the minimum nonzero value
+
+      # create a mask 
+      seq_hic_mask = (~seq_hic_nan).astype(float)
+      seq_hic_mask = seq_hic_mask[triu_tup]
 
       if options.as_obsexp:
         # compute obs/exp        
@@ -247,6 +252,7 @@ def main():
 
     # write
     seqs_hic_open['targets'][si,:] = seq_hic.astype('float16')
+    seqs_hic_open['masks'][si, :] = seq_hic_mask.astype('float16')
 
   # close sequences coverage file
   seqs_hic_open.close()

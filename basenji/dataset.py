@@ -220,7 +220,7 @@ class SeqDataset:
 
       # read TF Records
       dataset = dataset.flat_map(file_to_records)
-      dataset = dataset.map(self.generate_parser(raw=True))
+      dataset = dataset.map(self.generate_parser()) # removed 'raw=True' here
       dataset = dataset.batch(1)
 
     # initialize inputs and outputs
@@ -603,9 +603,10 @@ class RnaDataset:
     # initialize inputs and outputs
     seqs_1hot = []
     targets = []
+    masks = []
 
     # collect inputs and outputs
-    for seq_1hot, targets1 in dataset:
+    for seq_1hot, targets1, masks1 in dataset:
       # sequence
       if return_inputs:
         seqs_1hot.append(seq_1hot.numpy())
@@ -613,18 +614,20 @@ class RnaDataset:
       # targets
       if return_outputs:
         targets.append(targets1.numpy())
+        masks.append(masks1.numpy())
 
     # make arrays
     seqs_1hot = np.array(seqs_1hot)
     targets = np.array(targets)
+    masks = np.array(masks)
 
     # return
     if return_inputs and return_outputs:
-      return seqs_1hot, targets
+      return seqs_1hot, targets, masks
     elif return_inputs:
       return seqs_1hot
     else:
-      return targets
+      return targets, masks
 
 
 class RnaDatasetVikram:

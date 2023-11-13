@@ -83,6 +83,9 @@ def main():
                     s = boundary_positions[i] //bin_size
                     e = boundary_positions[i+1] //bin_size
                     targetMatrix[ s:e,s:e] = 1
+                    if s + 4 < seq_bins and e - 4 > 0:
+                        targetMatrix[(s+2):(e-2),(s+2):(e-2)] = 0.75
+                        targetMatrix[(s+4):(e-4),(s+4):(e-4)] = 0.5
                 
                 seq_dna = np.random.choice(['A','C','G','T'], size=seq_length, p= [.25,.25,.25,.25])
                 for i in range(1,len(boundary_positions)-1):
