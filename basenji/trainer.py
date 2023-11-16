@@ -31,7 +31,7 @@ from tensorflow.python.framework import dtypes
 from basenji import layers
 from basenji import metrics
 
-def parse_loss(loss_label, strategy=None, keras_fit=True, spec_weight=1, total_weight=1):
+def parse_loss(loss_label, strategy=None, keras_fit=True, spec_weight=1, total_weight=1, is_mask=False):
   """Parse loss function from label, strategy, and fitting method."""
   if strategy is not None and not keras_fit:
     if loss_label == 'mse':
@@ -61,7 +61,7 @@ def parse_loss(loss_label, strategy=None, keras_fit=True, spec_weight=1, total_w
 
 class Trainer:
   def __init__(self, params, train_data, eval_data, out_dir,
-               strategy=None, num_gpu=1, keras_fit=True):
+               strategy=None, num_gpu=1, keras_fit=True, is_mask=False):
     self.params = params
     self.train_data = train_data
     if type(self.train_data) is not list:
@@ -74,6 +74,7 @@ class Trainer:
     self.num_gpu = num_gpu
     self.batch_size = self.train_data[0].batch_size
     self.compiled = False
+    self.is_mask = is_mask
 
     # early stopping
     self.patience = self.params.get('patience', 20)
@@ -95,7 +96,7 @@ class Trainer:
     self.spec_weight = self.params.get('spec_weight', 1)
     self.total_weight = self.params.get('total_weight', 1)
     self.loss = self.params.get('loss','poisson').lower()
-    self.loss_fn = parse_loss(self.loss, self.strategy, keras_fit, self.spec_weight, self.total_weight)
+    self.loss_fn = parse_loss(self.loss, self.strategy, keras_fit, self.spec_weight, self.total_weight, is_mask=is_mask)
 
     # optimizer
     self.make_optimizer()
@@ -136,14 +137,15 @@ class Trainer:
       tf.keras.callbacks.ModelCheckpoint('%s/model_check.h5'%self.out_dir),
       save_best]
 
-    seqnn_model.model.fit(
+    model_history = seqnn_model.model.fit(
       self.train_data[0].dataset,
       epochs=self.train_epochs_max,
       steps_per_epoch=self.train_epoch_batches[0],
       callbacks=callbacks,
       validation_data=self.eval_data[0].dataset,
       validation_steps=self.eval_epoch_batches[0])
-
+    
+    return model_history
 
   def fit2(self, seqnn_model):
     if not self.compiled:
@@ -182,9 +184,12 @@ class Trainer:
     if self.strategy is None:
       # generate decorated train steps
       @tf.function
-      def train_step0(x, y):
+      def train_step0(x, y, mask=None):
         with tf.GradientTape() as tape:
           pred = seqnn_model.models[0](x, training=True)
+          if self.is_mask:
+            y = y * mask
+            pred = pred * mask
           loss = self.loss_fn(y, pred) + sum(seqnn_model.models[0].losses)
         train_loss[0](loss)
         train_r[0](y, pred)
@@ -193,8 +198,11 @@ class Trainer:
         self.optimizer.apply_gradients(zip(gradients, seqnn_model.models[0].trainable_variables))
 
       @tf.function
-      def eval_step0(x, y):
+      def eval_step0(x, y, mask=None):
         pred = seqnn_model.models[0](x, training=False)
+        if self.is_mask:
+          y = y * mask
+          pred = pred * mask
         loss = self.loss_fn(y, pred) + sum(seqnn_model.models[0].losses)
         valid_loss[0](loss)
         valid_r[0](y, pred)
@@ -202,9 +210,12 @@ class Trainer:
 
       if self.num_datasets > 1:
         @tf.function
-        def train_step1(x, y):
+        def train_step1(x, y, mask=None):
           with tf.GradientTape() as tape:
             pred = seqnn_model.models[1](x, training=True)
+            if self.is_mask:
+              y = y * mask
+              pred = pred * mask
             loss = self.loss_fn(y, pred) + sum(seqnn_model.models[1].losses)
           train_loss[1](loss)
           train_r[1](y, pred)
@@ -213,16 +224,22 @@ class Trainer:
           self.optimizer.apply_gradients(zip(gradients, seqnn_model.models[1].trainable_variables))
 
         @tf.function
-        def eval_step1(x, y):
+        def eval_step1(x, y, mask=None):
           pred = seqnn_model.models[1](x, training=False)
+          if self.is_mask:
+            y = y * mask
+            pred = pred * mask
           loss = self.loss_fn(y, pred) + sum(seqnn_model.models[1].losses)
           valid_loss[1](loss)
           valid_r[1](y, pred)
           valid_r2[1](y, pred)
     else:
-      def train_step0(x, y):
+      def train_step0(x, y, mask=None):
         with tf.GradientTape() as tape:
           pred = seqnn_model.models[0](x, training=True)
+          if self.is_mask:
+            y = y * mask
+            pred = pred * mask
           loss_batch_len = self.loss_fn(y, pred)
           loss_batch = tf.reduce_mean(loss_batch_len, axis=-1)
           loss = tf.reduce_sum(loss_batch) / self.batch_size
@@ -234,27 +251,33 @@ class Trainer:
         return loss
 
       @tf.function
-      def train_step0_distr(xd, yd):
-        replica_losses = self.strategy.run(train_step0, args=(xd, yd))
+      def train_step0_distr(xd, yd, mask=None):
+        replica_losses = self.strategy.run(train_step0, args=(xd, yd, mask))
         loss = self.strategy.reduce(tf.distribute.ReduceOp.SUM,
                                     replica_losses, axis=None)
         train_loss[0](loss)
 
-      def eval_step0(x, y):
+      def eval_step0(x, y, mask=None):
         pred = seqnn_model.models[0](x, training=False)
+        if self.is_mask:
+          y = y * mask
+          pred = pred * mask
         loss = self.loss_fn(y, pred) + sum(seqnn_model.models[0].losses)
         valid_loss[0](loss)
         valid_r[0](y, pred)
         valid_r2[0](y, pred)
 
       @tf.function
-      def eval_step0_distr(xd, yd):
-        return self.strategy.run(eval_step0, args=(xd, yd))
+      def eval_step0_distr(xd, yd, mask=None):
+        return self.strategy.run(eval_step0, args=(xd, yd, mask))
 
       if self.num_datasets > 1:
-        def train_step1(x, y):
+        def train_step1(x, y, mask=None):
           with tf.GradientTape() as tape:
             pred = seqnn_model.models[1](x, training=True)
+            if self.is_mask:
+              y = y * mask
+              pred = pred * mask
             loss_batch_len = self.loss_fn(y, pred)
             loss_batch = tf.reduce_mean(loss_batch_len, axis=-1)
             loss = tf.reduce_sum(loss_batch) / self.batch_size
@@ -267,22 +290,25 @@ class Trainer:
           return loss
 
         @tf.function
-        def train_step1_distr(xd, yd):
-          replica_losses = self.strategy.run(train_step1, args=(xd, yd))
+        def train_step1_distr(xd, yd, mask=None):
+          replica_losses = self.strategy.run(train_step1, args=(xd, yd, mask))
           loss = self.strategy.reduce(tf.distribute.ReduceOp.SUM,
                                       replica_losses, axis=None)
           train_loss[1](loss)
 
-        def eval_step1(x, y):
+        def eval_step1(x, y, mask=None):
           pred = seqnn_model.models[1](x, training=False)
+          if self.is_mask:
+            y = y * mask
+            pred = pred * mask
           loss = self.loss_fn(y, pred) + sum(seqnn_model.models[1].losses)
           valid_loss[1](loss)
           valid_r[1](y, pred)
           valid_r2[1](y, pred)
 
         @tf.function
-        def eval_step1_distr(xd, yd):
-          return self.strategy.run(eval_step1, args=(xd, yd))
+        def eval_step1_distr(xd, yd, mask=None):
+          return self.strategy.run(eval_step1, args=(xd, yd, mask))
 
     # checkpoint manager
     managers = []
@@ -326,17 +352,17 @@ class Trainer:
         # train
         t0 = time.time()
         for di in self.dataset_indexes:
-          x, y = safe_next(train_data_iters[di])
+          x, y, mask = safe_next(train_data_iters[di])
           if self.strategy is None:
             if di == 0:
-              train_step0(x, y)
+              train_step0(x, y, mask)
             else:
-              train_step1(x, y)
+              train_step1(x, y, mask)
           else:
             if di == 0:
-              train_step0_distr(x, y)
+              train_step0_distr(x, y, mask)
             else:
-              train_step1_distr(x, y)
+              train_step1_distr(x, y, mask)
           if first_step:
             print('Successful first step!', flush=True)
             first_step = False
@@ -352,17 +378,17 @@ class Trainer:
           print(' - train_r: %.4f' %  train_r2[di].result().numpy(), end='')
 
           # evaluate
-          for x, y in self.eval_data[di].dataset:
+          for x, y, mask in self.eval_data[di].dataset:
             if self.strategy is None:
               if di == 0:
-                eval_step0(x, y)
+                eval_step0(x, y, mask)
               else:
-                eval_step1(x, y)
+                eval_step1(x, y, mask)
             else:
               if di == 0:
-                eval_step0_distr(x, y)
+                eval_step0_distr(x, y, mask)
               else:
-                eval_step1_distr(x, y)
+                eval_step1_distr(x, y, mask)
 
           # print validation accuracy
           print(' - valid_loss: %.4f' % valid_loss[di].result().numpy(), end='')
@@ -395,7 +421,7 @@ class Trainer:
           valid_r2[di].reset_states()
 
         
-  def fit_tape(self, seqnn_model):
+  def fit_tape(self, seqnn_model, mask=None):
     if not self.compiled:
       self.compile(seqnn_model)
     model = seqnn_model.model
@@ -411,10 +437,14 @@ class Trainer:
     
     if self.strategy is None:
       @tf.function
-      def train_step(x, y):
+      def train_step(x, y, mask=None):
         with tf.GradientTape() as tape:
           pred = model(x, training=True)
+          if self.is_mask:
+            y = y * mask
+            pred = pred * mask
           loss = self.loss_fn(y, pred) + sum(model.losses)
+
         train_loss(loss)
         train_r(y, pred)
         train_r2(y, pred)
@@ -424,17 +454,23 @@ class Trainer:
         self.optimizer.apply_gradients(zip(gradients, model.trainable_variables))
 
       @tf.function
-      def eval_step(x, y):
+      def eval_step(x, y, mask=None):
         pred = model(x, training=False)
+        if self.is_mask:
+          y = y * mask
+          pred = pred * mask
         loss = self.loss_fn(y, pred) + sum(model.losses)
         valid_loss(loss)
         valid_r(y, pred)
         valid_r2(y, pred)
 
     else:
-      def train_step(x, y):
+      def train_step(x, y, mask=None):
         with tf.GradientTape() as tape:
           pred = model(x, training=True)
+          if self.is_mask:
+            y = y * mask
+            pred = pred * mask
           loss_batch_len = self.loss_fn(y, pred)
           loss_batch = tf.reduce_mean(loss_batch_len, axis=-1)
           loss = tf.reduce_sum(loss_batch) / self.batch_size
@@ -446,23 +482,26 @@ class Trainer:
         return loss
 
       @tf.function
-      def train_step_distr(xd, yd):
-        replica_losses = self.strategy.run(train_step, args=(xd, yd))
+      def train_step_distr(xd, yd, mask=None):
+        replica_losses = self.strategy.run(train_step, args=(xd, yd, mask))
         loss = self.strategy.reduce(tf.distribute.ReduceOp.SUM,
                                     replica_losses, axis=None)
         train_loss(loss)
 
 
-      def eval_step(x, y):
+      def eval_step(x, y, mask=None):
         pred = model(x, training=False)
+        if self.is_mask:
+          y = y * mask
+          pred = pred * mask
         loss = self.loss_fn(y, pred) + sum(model.losses)
         valid_loss(loss)
         valid_r(y, pred)
         valid_r2(y, pred)
 
       @tf.function
-      def eval_step_distr(xd, yd):
-        return self.strategy.run(eval_step, args=(xd, yd))
+      def eval_step_distr(xd, yd, mask=None):
+        return self.strategy.run(eval_step, args=(xd, yd, mask))
 
     # checkpoint manager
     ckpt = tf.train.Checkpoint(model=seqnn_model.model, optimizer=self.optimizer)
@@ -494,20 +533,20 @@ class Trainer:
         t0 = time.time()
         train_iter = iter(self.train_data[0].dataset)
         for si in range(self.train_epoch_batches[0]):
-          x, y = safe_next(train_iter)
+          x, y, mask = safe_next(train_iter)
           if self.strategy is not None:
-            train_step_distr(x, y)
+            train_step_distr(x, y, mask)
           else:
-            train_step(x, y)
+            train_step(x, y, mask)
           if ei == epoch_start and si == 0:
             print('Successful first step!', flush=True)
 
         # evaluate
-        for x, y in self.eval_data[0].dataset:
+        for x, y, mask in self.eval_data[0].dataset:
           if self.strategy is not None:
-            eval_step_distr(x, y)
+            eval_step_distr(x, y, mask)
           else:
-            eval_step(x, y)
+            eval_step(x, y, mask)
 
         # print training accuracy
         train_loss_epoch = train_loss.result().numpy()

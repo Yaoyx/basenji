@@ -29,9 +29,12 @@ from tensorflow.keras import mixed_precision
 if tf.__version__[0] == '1':
   tf.compat.v1.enable_eager_execution()
 
-from basenji import dataset
-from basenji import seqnn
-from basenji import trainer
+import sys
+sys.path.append('/home1/yxiao977/labwork/train_akita/')
+
+from masked_akita.basenji import dataset
+from masked_akita.basenji import seqnn
+from masked_akita.basenji import trainer
 
 
 """
@@ -125,7 +128,7 @@ def main():
     # one GPU
 
     # initialize model
-    seqnn_model = seqnn.SeqNN(params_model)
+    seqnn_model = seqnn.SeqNN(params_model, is_mask=params_train['is_mask'])
 
     # restore
     if options.restore:
@@ -133,7 +136,7 @@ def main():
 
     # initialize trainer
     seqnn_trainer = trainer.Trainer(params_train, train_data, 
-                                    eval_data, options.out_dir)
+                                    eval_data, options.out_dir, is_mask=params_train['is_mask'])
 
     # compile model
     seqnn_trainer.compile(seqnn_model)
@@ -153,7 +156,7 @@ def main():
           eval_data[di].distribute(strategy)
 
       # initialize model
-      seqnn_model = seqnn.SeqNN(params_model)
+      seqnn_model = seqnn.SeqNN(params_model, is_mask=params_train['is_mask'])
 
       # restore
       if options.restore:
@@ -161,14 +164,17 @@ def main():
 
       # initialize trainer
       seqnn_trainer = trainer.Trainer(params_train, train_data, eval_data, options.out_dir,
-                                      strategy, params_train['num_gpu'], options.keras_fit)
+                                      strategy, params_train['num_gpu'], options.keras_fit, is_mask=params_train['is_mask'])
 
       # compile model
       seqnn_trainer.compile(seqnn_model)
 
   # train model
   if options.keras_fit:
-    seqnn_trainer.fit_keras(seqnn_model)
+    model_history = seqnn_trainer.fit_keras(seqnn_model)
+    model_history = model_history.history
+    json.dump(model_history, open(options.out_dir+'/model_history.json', 'w'))
+
   else:
     if len(data_dirs) == 1:
       seqnn_trainer.fit_tape(seqnn_model)

@@ -8,8 +8,8 @@ with open('LICENSE') as f:
   license = f.read()
 
 setup(
-    name='basenji',
-    version='0.1',
+    name='masked_basenji',
+    version='0.2',
     description='Sequential regulatory activity machine learning',
     long_description=readme,
     author='David Kelley',

@@ -107,11 +107,13 @@ def main():
 
   # initialize targets
   targets = np.zeros((num_seqs, seq_pool_len, num_targets), dtype='float16')
+  masks = np.zeros((num_seqs, seq_pool_len, num_targets), dtype='float16')
 
   # read each target
   for ti in range(num_targets):
     seqs_cov_open = h5py.File(seqs_cov_files[ti], 'r')
     targets[:,:,ti] = seqs_cov_open['targets'][options.start_i:options.end_i,:]
+    masks[:,:,ti] = seqs_cov_open['masks'][options.start_i:options.end_i,:]
     seqs_cov_open.close()
 
   ################################################################
@@ -162,15 +164,22 @@ def main():
         targets_si = np.around(targets_si, decimals=options.decimals)
         targets_si = targets_si.astype('float16')
         # targets_si = rround(targets[si], decimals=options.decimals)
+
+        masks_si = masks[si].astype('float32')
+        masks_si = np.around(masks_si, decimals=options.decimals)
+        masks_si = masks_si.astype('float16')
+
       else:
         targets_si = targets[si]
+        masks_si = masks[si]
 
       assert(np.isinf(targets_si).sum() == 0)
 
       # hash to bytes
       features_dict = {
         'sequence': feature_bytes(seq_1hot),
-        'target': feature_bytes(targets_si)
+        'target': feature_bytes(targets_si),
+        'mask': feature_bytes(masks_si)
         }
 
       # add unmappability

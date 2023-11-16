@@ -26,14 +26,71 @@ from basenji import blocks
 from basenji import layers
 from basenji import metrics
 
+class MaskedModel(tf.keras.Model):
+  def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+  def train_step(self, data):
+    x, y, mask = data
+    # Run forward pass.
+    with tf.GradientTape() as tape:
+        y_pred = self(x, training=True)
+     
+        y_pred = y_pred * mask
+        y = y * mask
+        loss = self.compute_loss(x, y, y_pred, sample_weight=None)
+        
+    self._validate_target_and_loss(y, loss)
+    # Run backwards pass.
+    self.optimizer.minimize(loss, self.trainable_variables, tape=tape)
+    return self.compute_metrics(x, y, y_pred, sample_weight=None)
+  
+  def test_step(self, data):
+    x, y, mask = data
+    y_pred = self(x, training=False)
+    y_pred = y_pred * mask
+    y = y * mask
+    self.compute_loss(x, y, y_pred, sample_weight=None)
+
+    return self.compute_metrics(x, y, y_pred, sample_weight=None)
+
+class UnmaskedModel(tf.keras.Model):
+  def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+  def train_step(self, data):
+    x, y, mask = data
+    # Run forward pass.
+    with tf.GradientTape() as tape:
+        y_pred = self(x, training=True)
+        loss = self.compute_loss(x, y, y_pred, sample_weight=None)
+
+    self._validate_target_and_loss(y, loss)
+    # Run backwards pass.
+    self.optimizer.minimize(loss, self.trainable_variables, tape=tape)
+    return self.compute_metrics(x, y, y_pred, sample_weight=None)
+  
+  def test_step(self, data):
+    x, y, mask = data
+    y_pred = self(x, training=False)
+    self.compute_loss(x, y, y_pred, sample_weight=None)
+
+    return self.compute_metrics(x, y, y_pred, sample_weight=None)
+  
 class SeqNN():
 
-  def __init__(self, params):
+  def __init__(self, params, is_mask=False):
+    if is_mask:
+      tf.keras.Model = MaskedModel
+    else:
+      tf.keras.Model = UnmaskedModel
+
     self.set_defaults()
     for key, value in params.items():
       self.__setattr__(key, value)
     self.build_model()
     self.ensemble = None
+    self.is_mask = is_mask
 
   def set_defaults(self):
     # only necessary for my bespoke parameters
@@ -840,3 +897,4 @@ class SeqNN():
       self.models[head_i] = model_step
     else:
       self.model = model_step
+
